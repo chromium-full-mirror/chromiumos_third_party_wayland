@@ -41,7 +41,11 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <semaphore.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
+#include "wayland-debug-to-file.h"
 #include "wayland-util.h"
 #include "wayland-os.h"
 #include "wayland-client.h"
@@ -107,11 +111,25 @@ struct wl_display {
 	int reader_count;
 	uint32_t read_serial;
 	pthread_cond_t reader_cond;
+
+	struct wl_debug_to_file debug;
 };
 
 /** \endcond */
 
 static int debug_client = 0;
+
+static void
+debug_print(struct wl_closure *closure,
+            struct wl_object *target,
+            int send,
+            struct wl_debug_to_file *data) {
+	if (debug_client)
+		wl_closure_print(closure, target, send, stderr);
+
+	if (is_debug_to_file_enabled(data))
+		wl_closure_print(closure, target, send, data->log_file);
+}
 
 /**
  * This helper function wakes up all threads that are
@@ -751,8 +769,7 @@ wl_proxy_marshal_array_constructor_versioned(struct wl_proxy *proxy,
 		goto err_unlock;
 	}
 
-	if (debug_client)
-		wl_closure_print(closure, &proxy->object, true);
+	debug_print(closure, &proxy->object, true, &proxy->display->debug);
 
 	if (wl_closure_send(closure, proxy->display->connection)) {
 		wl_log("Error sending request: %s\n", strerror(errno));
@@ -1049,6 +1066,8 @@ wl_display_connect_to_fd(int fd)
 		return NULL;
 	}
 
+	wl_init_debug_to_file(/*is_server=*/0, &display->debug);
+
 	display->fd = fd;
 	wl_map_init(&display->objects, WL_MAP_CLIENT_SIDE);
 	wl_event_queue_init(&display->default_queue, display);
@@ -1173,6 +1192,7 @@ wl_display_disconnect(struct wl_display *display)
 	pthread_mutex_destroy(&display->mutex);
 	pthread_cond_destroy(&display->reader_cond);
 	close(display->fd);
+	wl_cleanup_debug_to_file(&display->debug);
 
 	free(display);
 }
@@ -1433,14 +1453,12 @@ dispatch_event(struct wl_display *display, struct wl_event_queue *queue)
 	pthread_mutex_unlock(&display->mutex);
 
 	if (proxy->dispatcher) {
-		if (debug_client)
-			wl_closure_print(closure, &proxy->object, false);
+		debug_print(closure, &proxy->object, false, &display->debug);
 
 		wl_closure_dispatch(closure, proxy->dispatcher,
 				    &proxy->object, opcode);
 	} else if (proxy->object.implementation) {
-		if (debug_client)
-			wl_closure_print(closure, &proxy->object, false);
+		debug_print(closure, &proxy->object, false, &display->debug);
 
 		wl_closure_invoke(closure, WL_CLOSURE_INVOKE_CLIENT,
 				  &proxy->object, opcode, proxy->user_data);

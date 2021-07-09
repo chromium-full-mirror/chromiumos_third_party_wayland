@@ -41,9 +41,12 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <fcntl.h>
+#include <semaphore.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
+#include "wayland-debug-to-file.h"
 #include "wayland-util.h"
 #include "wayland-private.h"
 #include "wayland-server-private.h"
@@ -104,6 +107,8 @@ struct wl_display {
 
 	wl_display_global_filter_func_t global_filter;
 	void *global_filter_data;
+
+	struct wl_debug_to_file debug;
 };
 
 struct wl_global {
@@ -151,7 +156,10 @@ log_closure(struct wl_resource *resource,
 	struct wl_protocol_logger_message message;
 
 	if (debug_server)
-		wl_closure_print(closure, object, send);
+		wl_closure_print(closure, object, send, stderr);
+
+	if (is_debug_to_file_enabled(&display->debug))
+		wl_closure_print(closure, object, send, display->debug.log_file);
 
 	if (!wl_list_empty(&display->protocol_loggers)) {
 		message.resource = resource;
@@ -1053,6 +1061,8 @@ wl_display_create(void)
 	if (display == NULL)
 		return NULL;
 
+	wl_init_debug_to_file(/*is_server=*/1, &display->debug);
+
 	display->loop = wl_event_loop_create();
 	if (display->loop == NULL) {
 		free(display);
@@ -1144,6 +1154,8 @@ wl_display_destroy(struct wl_display *display)
 	wl_array_release(&display->additional_shm_formats);
 
 	wl_list_remove(&display->protocol_loggers);
+
+	wl_cleanup_debug_to_file(&display->debug);
 
 	free(display);
 }

@@ -2,6 +2,10 @@ option('libraries',
   description: 'Compile Wayland libraries',
   type: 'boolean',
   value: 'true')
+option('debug_util',
+  description: 'Compile a utility for enabling/disabling debugging.',
+  type: 'boolean',
+  value: 'true')
 option('documentation',
   description: 'Build the documentation (requires Doxygen, dot, xmlto, xsltproc)',
   type: 'boolean',

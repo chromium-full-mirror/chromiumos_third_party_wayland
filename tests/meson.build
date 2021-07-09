@@ -10,6 +10,7 @@ test_runner = static_library(
 		cc.find_library('dl', required: false),
 		dependency('threads'),
 		ffi_dep,
+		wayland_debug_to_file_dep,
 		wayland_util_dep,
 		wayland_private_dep,
 		wayland_client_dep,

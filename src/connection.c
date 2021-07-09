@@ -1256,7 +1256,7 @@ wl_closure_queue(struct wl_closure *closure, struct wl_connection *connection)
 }
 
 void
-wl_closure_print(struct wl_closure *closure, struct wl_object *target, int send)
+wl_closure_print(struct wl_closure *closure, struct wl_object *target, int send, FILE* log)
 {
 	int i;
 	struct argument_details arg;
@@ -1264,10 +1264,13 @@ wl_closure_print(struct wl_closure *closure, struct wl_object *target, int send)
 	struct timespec tp;
 	unsigned int time;
 
+	if (log == NULL)
+		return;
+
 	clock_gettime(CLOCK_REALTIME, &tp);
 	time = (tp.tv_sec * 1000000L) + (tp.tv_nsec / 1000);
 
-	fprintf(stderr, "[%10.3f] %s%s@%u.%s(",
+	fprintf(log, "[%10.3f] %s%s@%u.%s(",
 		time / 1000.0,
 		send ? " -> " : "",
 		target->interface->name, target->id,
@@ -1276,53 +1279,53 @@ wl_closure_print(struct wl_closure *closure, struct wl_object *target, int send)
 	for (i = 0; i < closure->count; i++) {
 		signature = get_next_argument(signature, &arg);
 		if (i > 0)
-			fprintf(stderr, ", ");
+			fprintf(log, ", ");
 
 		switch (arg.type) {
 		case 'u':
-			fprintf(stderr, "%u", closure->args[i].u);
+			fprintf(log, "%u", closure->args[i].u);
 			break;
 		case 'i':
-			fprintf(stderr, "%d", closure->args[i].i);
+			fprintf(log, "%d", closure->args[i].i);
 			break;
 		case 'f':
-			fprintf(stderr, "%f",
+			fprintf(log, "%f",
 				wl_fixed_to_double(closure->args[i].f));
 			break;
 		case 's':
 			if (closure->args[i].s)
-				fprintf(stderr, "\"%s\"", closure->args[i].s);
+				fprintf(log, "\"%s\"", closure->args[i].s);
 			else
-				fprintf(stderr, "nil");
+				fprintf(log, "nil");
 			break;
 		case 'o':
 			if (closure->args[i].o)
-				fprintf(stderr, "%s@%u",
+				fprintf(log, "%s@%u",
 					closure->args[i].o->interface->name,
 					closure->args[i].o->id);
 			else
-				fprintf(stderr, "nil");
+				fprintf(log, "nil");
 			break;
 		case 'n':
-			fprintf(stderr, "new id %s@",
+			fprintf(log, "new id %s@",
 				(closure->message->types[i]) ?
 				 closure->message->types[i]->name :
 				  "[unknown]");
 			if (closure->args[i].n != 0)
-				fprintf(stderr, "%u", closure->args[i].n);
+				fprintf(log, "%u", closure->args[i].n);
 			else
-				fprintf(stderr, "nil");
+				fprintf(log, "nil");
 			break;
 		case 'a':
-			fprintf(stderr, "array");
+			fprintf(log, "array");
 			break;
 		case 'h':
-			fprintf(stderr, "fd %d", closure->args[i].h);
+			fprintf(log, "fd %d", closure->args[i].h);
 			break;
 		}
 	}
 
-	fprintf(stderr, ")\n");
+	fprintf(log, ")\n");
 }
 
 static int

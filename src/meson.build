@@ -21,6 +21,16 @@ wayland_util_dep = declare_dependency(
 	include_directories: include_directories('.')
 )
 
+wayland_debug_to_file = static_library(
+	'wayland-debug-to-file',
+	sources: 'wayland-debug-to-file.c'
+)
+
+wayland_debug_to_file_dep = declare_dependency(
+	link_with: wayland_debug_to_file,
+	include_directories: include_directories('.')
+)
+
 # wayland-scanner
 
 configure_file(
@@ -146,6 +156,7 @@ if get_option('libraries')
 		version: '0.1.0',
 		dependencies: [
 			ffi_dep,
+			wayland_debug_to_file_dep,
 			wayland_private_dep,
 			wayland_util_dep,
 			mathlib_dep,
@@ -188,6 +199,7 @@ if get_option('libraries')
 		version: '0.3.0',
 		dependencies: [
 			ffi_dep,
+			wayland_debug_to_file_dep,
 			wayland_private_dep,
 			wayland_util_dep,
 			mathlib_dep,
@@ -225,4 +237,15 @@ if get_option('libraries')
 		'wayland-client.h',
 		'wayland-client-core.h',
 	])
+endif
+
+if get_option('debug_util')
+	threads_dep = dependency('threads')
+
+	toggle_wayland_debug = executable(
+		'toggle-wayland-debug',
+		['toggle-wayland-debug.c'],
+		dependencies: threads_dep,
+		install: true
+	)
 endif

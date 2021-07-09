@@ -31,6 +31,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdbool.h>
 
 #define WL_HIDE_DEPRECATED 1
@@ -211,7 +212,7 @@ wl_closure_queue(struct wl_closure *closure, struct wl_connection *connection);
 
 void
 wl_closure_print(struct wl_closure *closure,
-		 struct wl_object *target, int send);
+		 struct wl_object *target, int send, FILE* log);
 
 void
 wl_closure_destroy(struct wl_closure *closure);
