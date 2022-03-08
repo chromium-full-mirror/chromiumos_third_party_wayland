@@ -9,6 +9,7 @@ test_runner = static_library(
 	dependencies: [
 		cc.find_library('dl', required: false),
 		dependency('threads'),
+		epoll_dep,
 		ffi_dep,
 		wayland_debug_to_file_dep,
 		wayland_util_dep,
@@ -65,15 +66,17 @@ executable(
 	dependencies: test_runner_dep
 )
 
-test(
-	'cpp-compile-test',
-	executable(
+if add_languages('cpp')
+	test(
 		'cpp-compile-test',
-		'cpp-compile-test.cpp',
-		wayland_server_protocol_h,
-		include_directories: src_inc
+		executable(
+			'cpp-compile-test',
+			'cpp-compile-test.cpp',
+			wayland_server_protocol_h,
+			include_directories: src_inc
+		)
 	)
-)
+endif
 
 sed_path = find_program('sed').path()
 
@@ -153,7 +156,7 @@ tests = {
 
 foreach test_name, test_extra_sources: tests
 	test_sources = [ test_name + '.c' ] + test_extra_sources
-	test_deps = [test_runner_dep]
+	test_deps = [test_runner_dep, epoll_dep]
 	bin = executable(test_name, test_sources, dependencies: test_deps)
 	test(
 		test_name,

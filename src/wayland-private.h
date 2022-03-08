@@ -212,7 +212,8 @@ wl_closure_queue(struct wl_closure *closure, struct wl_connection *connection);
 
 void
 wl_closure_print(struct wl_closure *closure,
-		 struct wl_object *target, int send, FILE* log);
+		 struct wl_object *target, int send, int discarded,
+		 uint32_t (*n_parse)(union wl_argument *arg), FILE* log);
 
 void
 wl_closure_destroy(struct wl_closure *closure);

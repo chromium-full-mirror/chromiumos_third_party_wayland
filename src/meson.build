@@ -1,4 +1,3 @@
-wayland_version = meson.project_version().split('.')
 wayland_version_h = configuration_data()
 wayland_version_h.set('WAYLAND_VERSION', meson.project_version())
 wayland_version_h.set('WAYLAND_VERSION_MAJOR', wayland_version[0].to_int())
@@ -37,19 +36,31 @@ wayland_debug_to_file_dep = declare_dependency(
 if get_option('scanner')
 	# wayland-scanner
 
-	configure_file(
+	scanner_deps = [ dependency('expat') ]
+	scanner_args = [ '-include', 'config.h' ]
+
+	if get_option('dtd_validation')
+		scanner_deps += dependency('libxml-2.0')
+		scanner_args += '-DHAVE_LIBXML=1'
+	endif
+
+	prog_embed = find_program('embed.py', native: true)
+
+	embed_dtd = custom_target(
+		'wayland.dtd.h',
 		input: '../protocol/wayland.dtd',
-		output: 'wayland.dtd.embed',
-		copy: true
+		output: 'wayland.dtd.h',
+		command: [ prog_embed, '@INPUT@', 'wayland_dtd' ],
+		capture: true
 	)
 
-	wayland_scanner_sources = [ 'scanner.c', 'dtddata.S' ]
+	wayland_scanner_sources = [ 'scanner.c', embed_dtd ]
 	wayland_scanner_includes = [ root_inc, protocol_inc ]
 
 	wayland_scanner = executable(
 		'wayland-scanner',
 		wayland_scanner_sources,
-		c_args: [ '-include', 'config.h' ],
+		c_args: scanner_args,
 		include_directories: wayland_scanner_includes,
 		dependencies: [ scanner_deps, wayland_util_dep, ],
 		install: true
@@ -88,7 +99,7 @@ if get_option('libraries')
 			'connection.c',
 			'wayland-os.c'
 		],
-		dependencies: [ ffi_dep, rt_dep ]
+		dependencies: [ epoll_dep, ffi_dep, rt_dep ]
 	)
 
 	wayland_private_dep = declare_dependency(
@@ -150,6 +161,15 @@ if get_option('libraries')
 		output: 'wayland-protocol.c'
 	)
 
+	if wayland_version[0] != '1'
+		# The versioning used for the shared libraries assumes that the major
+		# version of Wayland as a whole will increase to 2 if and only if there
+		# is an ABI break, at which point we should probably bump the SONAME of
+		# all libraries to .so.2. For more details see
+		# https://gitlab.freedesktop.org/wayland/wayland/-/merge_requests/177
+		error('We probably need to bump the SONAME of libwayland-server and -client')
+	endif
+
 	wayland_server = library(
 		'wayland-server',
 		sources: [
@@ -160,8 +180,11 @@ if get_option('libraries')
 			'wayland-shm.c',
 			'event-loop.c'
 		],
-		version: '0.1.0',
+		# To avoid an unnecessary SONAME bump, wayland 1.x.y produces
+		# libwayland-server.so.0.x.y.
+		version: '.'.join(['0', wayland_version[1], wayland_version[2]]),
 		dependencies: [
+			epoll_dep,
 			ffi_dep,
 			wayland_debug_to_file_dep,
 			wayland_private_dep,
@@ -177,7 +200,7 @@ if get_option('libraries')
 	wayland_server_dep = declare_dependency(
 		link_with: wayland_server,
 		include_directories: [ root_inc, include_directories('.') ],
-		dependencies: [ ffi_dep, mathlib_dep, threads_dep ],
+		dependencies: [ epoll_dep, ffi_dep, mathlib_dep, threads_dep ],
 		sources: [
 			wayland_server_protocol_core_h,
 			wayland_server_protocol_h
@@ -196,6 +219,10 @@ if get_option('libraries')
 		]
 	)
 
+	if meson.version().version_compare('>= 0.54.0')
+		meson.override_dependency('wayland-server', wayland_server_dep)
+	endif
+
 	wayland_client = library(
 		'wayland-client',
 		sources: [
@@ -204,8 +231,11 @@ if get_option('libraries')
 			wayland_protocol_c,
 			'wayland-client.c'
 		],
-		version: '0.3.0',
+		# To avoid an unnecessary SONAME bump, wayland 1.x.y produces
+		# libwayland-client.so.0.x.y.
+		version: '.'.join(['0', wayland_version[1], wayland_version[2]]),
 		dependencies: [
+			epoll_dep,
 			ffi_dep,
 			wayland_debug_to_file_dep,
 			wayland_private_dep,
@@ -237,6 +267,10 @@ if get_option('libraries')
 			wayland_client_protocol_h
 		]
 	)
+
+	if meson.version().version_compare('>= 0.54.0')
+		meson.override_dependency('wayland-client', wayland_client_dep)
+	endif
 
 	install_headers([
 		'wayland-util.h',
