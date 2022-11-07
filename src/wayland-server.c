@@ -158,12 +158,15 @@ log_closure(struct wl_resource *resource,
 	struct wl_display *display = resource->client->display;
 	struct wl_protocol_logger *protocol_logger;
 	struct wl_protocol_logger_message message;
+	FILE* log;
 
 	if (debug_server)
 		wl_closure_print(closure, object, send, false, NULL, stderr);
 
-	if (is_debug_to_file_enabled(&display->debug))
-		wl_closure_print(closure, object, send, false, NULL, display->debug.log_file);
+	log = wl_debug_log(&display->debug, /*is_server=*/1);
+	if (log) {
+		wl_closure_print(closure, object, send, false, NULL, log);
+	}
 
 	if (!wl_list_empty(&display->protocol_loggers)) {
 		message.resource = resource;
@@ -1073,7 +1076,7 @@ wl_display_create(void)
 	if (display == NULL)
 		return NULL;
 
-	wl_init_debug_to_file(/*is_server=*/1, &display->debug);
+	wl_init_debug_to_file(&display->debug);
 
 	display->loop = wl_event_loop_create();
 	if (display->loop == NULL) {

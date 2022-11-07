@@ -126,11 +126,14 @@ debug_print(struct wl_closure *closure,
             int discarded,
             uint32_t (*n_parse)(union wl_argument *arg),
             struct wl_debug_to_file *data) {
+	FILE* log;
 	if (debug_client)
 		wl_closure_print(closure, target, send, discarded, n_parse, stderr);
 
-	if (is_debug_to_file_enabled(data))
-		wl_closure_print(closure, target, send, discarded, n_parse, data->log_file);
+	log = wl_debug_log(data, /*is_server=*/0);
+	if (log) {
+		wl_closure_print(closure, target, send, discarded, n_parse, log);
+	}
 }
 
 /**
@@ -1166,7 +1169,7 @@ wl_display_connect_to_fd(int fd)
 		return NULL;
 	}
 
-	wl_init_debug_to_file(/*is_server=*/0, &display->debug);
+	wl_init_debug_to_file(&display->debug);
 
 	display->fd = fd;
 	wl_map_init(&display->objects, WL_MAP_CLIENT_SIDE);
@@ -1588,17 +1591,16 @@ dispatch_event(struct wl_display *display, struct wl_event_queue *queue)
 		destroy_queued_closure(closure);
 		return;
 	}
+	if (proxy->dispatcher || proxy->object.implementation) {
+		debug_print(closure, &proxy->object, false, false, id_from_object, &display->debug);
+	}
 
 	pthread_mutex_unlock(&display->mutex);
 
 	if (proxy->dispatcher) {
-		debug_print(closure, &proxy->object, false, false, id_from_object, &display->debug);
-
 		wl_closure_dispatch(closure, proxy->dispatcher,
 				    &proxy->object, opcode);
 	} else if (proxy->object.implementation) {
-		debug_print(closure, &proxy->object, false, false, id_from_object, &display->debug);
-
 		wl_closure_invoke(closure, WL_CLOSURE_INVOKE_CLIENT,
 				  &proxy->object, opcode, proxy->user_data);
 	}
