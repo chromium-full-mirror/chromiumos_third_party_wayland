@@ -588,6 +588,9 @@ err_client:
  * SO_PEERCRED, on the client socket fd.  All the pointers can be
  * NULL, if the caller is not interested in a particular ID.
  *
+ * Note, process IDs are subject to race conditions and are not a reliable way
+ * to identify a client.
+ *
  * Be aware that for clients that a compositor forks and execs and
  * then connects using socketpair(), this function will return the
  * credentials for the compositor.  The credentials for the socketpair
@@ -1072,7 +1075,7 @@ wl_display_create(void)
 	if (debug && (strstr(debug, "server") || strstr(debug, "1")))
 		debug_server = 1;
 
-	display = malloc(sizeof *display);
+	display = zalloc(sizeof *display);
 	if (display == NULL)
 		return NULL;
 
@@ -1219,6 +1222,10 @@ wl_display_destroy(struct wl_display *display)
  * Setting the filter NULL will result in all globals being
  * advertised to all clients. The default is no filter.
  *
+ * The filter should be installed before any client connects and should always
+ * take the same decision given a client and a global. Not doing so will result
+ * in inconsistent filtering and broken wl_registry event sequences.
+ *
  * \memberof wl_display
  */
 WL_EXPORT void
@@ -1252,7 +1259,7 @@ wl_global_create(struct wl_display *display,
 		return NULL;
 	}
 
-	global = malloc(sizeof *global);
+	global = zalloc(sizeof *global);
 	if (global == NULL)
 		return NULL;
 
@@ -1266,11 +1273,12 @@ wl_global_create(struct wl_display *display,
 	wl_list_insert(display->global_list.prev, &global->link);
 
 	wl_list_for_each(resource, &display->registry_resource_list, link)
-		wl_resource_post_event(resource,
-				       WL_REGISTRY_GLOBAL,
-				       global->name,
-				       global->interface->name,
-				       global->version);
+		if (wl_global_is_visible(resource->client, global))
+			wl_resource_post_event(resource,
+					       WL_REGISTRY_GLOBAL,
+					       global->name,
+					       global->interface->name,
+					       global->version);
 
 	return global;
 }
@@ -1308,8 +1316,9 @@ wl_global_remove(struct wl_global *global)
 			 global->name);
 
 	wl_list_for_each(resource, &display->registry_resource_list, link)
-		wl_resource_post_event(resource, WL_REGISTRY_GLOBAL_REMOVE,
-				       global->name);
+		if (wl_global_is_visible(resource->client, global))
+			wl_resource_post_event(resource, WL_REGISTRY_GLOBAL_REMOVE,
+					       global->name);
 
 	global->removed = true;
 }
@@ -1327,6 +1336,20 @@ WL_EXPORT const struct wl_interface *
 wl_global_get_interface(const struct wl_global *global)
 {
 	return global->interface;
+}
+
+/** Get the version of the given global.
+ *
+ * \param global The global object.
+ * \return The version advertised by the global.
+ *
+ * \memberof wl_global
+ * \since 1.21
+ */
+WL_EXPORT uint32_t
+wl_global_get_version(const struct wl_global *global)
+{
+	return global->version;
 }
 
 /** Get the display object for the given global
@@ -1557,8 +1580,9 @@ wl_socket_init_for_display_name(struct wl_socket *s, const char *name)
 
 	if (name[0] != '/') {
 		runtime_dir = getenv("XDG_RUNTIME_DIR");
-		if (!runtime_dir) {
-			wl_log("error: XDG_RUNTIME_DIR not set in the environment\n");
+		if (!runtime_dir || runtime_dir[0] != '/') {
+			wl_log("error: XDG_RUNTIME_DIR is invalid or not set in"
+			       " the environment\n");
 
 			/* to prevent programs reporting
 			 * "failed to add socket: Success" */
@@ -1718,7 +1742,7 @@ wl_display_add_socket_fd(struct wl_display *display, int sock_fd)
  *
  * If the socket name is a relative path, the Unix socket will be created in
  * the directory pointed to by environment variable XDG_RUNTIME_DIR. If
- * XDG_RUNTIME_DIR is not set, then this function fails and returns -1.
+ * XDG_RUNTIME_DIR is invalid or not set, then this function fails and returns -1.
  *
  * If the socket name is an absolute path, then it is used as-is for the
  * the Unix socket.
@@ -1836,12 +1860,17 @@ wl_resource_create(struct wl_client *client,
 {
 	struct wl_resource *resource;
 
-	resource = malloc(sizeof *resource);
+	resource = zalloc(sizeof *resource);
 	if (resource == NULL)
 		return NULL;
 
-	if (id == 0)
+	if (id == 0) {
 		id = wl_map_insert_new(&client->objects, 0, NULL);
+		if (id == 0) {
+			free(resource);
+			return NULL;
+		}
+	}
 
 	resource->object.id = id;
 	resource->object.interface = interface;
@@ -1857,9 +1886,11 @@ wl_resource_create(struct wl_client *client,
 	resource->dispatcher = NULL;
 
 	if (wl_map_insert_at(&client->objects, 0, id, resource) < 0) {
-		wl_resource_post_error(client->display_resource,
-				       WL_DISPLAY_ERROR_INVALID_OBJECT,
-				       "invalid new id %d", id);
+		if (errno == EINVAL) {
+			wl_resource_post_error(client->display_resource,
+					       WL_DISPLAY_ERROR_INVALID_OBJECT,
+					       "invalid new id %d", id);
+		}
 		free(resource);
 		return NULL;
 	}
@@ -1902,7 +1933,7 @@ wl_display_add_protocol_logger(struct wl_display *display,
 {
 	struct wl_protocol_logger *logger;
 
-	logger = malloc(sizeof *logger);
+	logger = zalloc(sizeof *logger);
 	if (!logger)
 		return NULL;
 
@@ -2103,6 +2134,69 @@ wl_client_for_each_resource(struct wl_client *client,
 	wl_map_for_each(&client->objects, resource_iterator_helper, &context);
 }
 
+static void
+handle_noop(struct wl_listener *listener, void *data)
+{
+	/* Do nothing */
+}
+
+/** Emits this signal, notifying all registered listeners.
+ *
+ * A safer version of wl_signal_emit() which can gracefully handle additions
+ * and deletions of any signal listener from within listener notification
+ * callbacks.
+ *
+ * Listeners deleted during a signal emission and which have not already been
+ * notified at the time of deletion are not notified by that emission.
+ *
+ * Listeners added (or readded) during signal emission are ignored by that
+ * emission.
+ *
+ * Note that repurposing a listener without explicitly removing it and readding
+ * it is not supported and can lead to unexpected behavior.
+ *
+ * \param signal The signal object that will emit the signal
+ * \param data The data that will be emitted with the signal
+ *
+ * \memberof wl_signal
+ * \since 1.20.90
+ */
+WL_EXPORT void
+wl_signal_emit_mutable(struct wl_signal *signal, void *data)
+{
+	struct wl_listener cursor;
+	struct wl_listener end;
+
+	/* Add two special markers: one cursor and one end marker. This way, we
+	 * know that we've already called listeners on the left of the cursor
+	 * and that we don't want to call listeners on the right of the end
+	 * marker. The 'it' function can remove any element it wants from the
+	 * list without troubles.
+	 *
+	 * There was a previous attempt that used to steal the whole list of
+	 * listeners but then that broke wl_signal_get().
+	 *
+	 * wl_list_for_each_safe tries to be safe but it fails: it works fine
+	 * if the current item is removed, but not if the next one is. */
+	wl_list_insert(&signal->listener_list, &cursor.link);
+	cursor.notify = handle_noop;
+	wl_list_insert(signal->listener_list.prev, &end.link);
+	end.notify = handle_noop;
+
+	while (cursor.link.next != &end.link) {
+		struct wl_list *pos = cursor.link.next;
+		struct wl_listener *l = wl_container_of(pos, l, link);
+
+		wl_list_remove(&cursor.link);
+		wl_list_insert(pos, &cursor.link);
+
+		l->notify(l, data);
+	}
+
+	wl_list_remove(&cursor.link);
+	wl_list_remove(&end.link);
+}
+
 /** \cond INTERNAL */
 
 /** Initialize a wl_priv_signal object
@@ -2252,12 +2346,16 @@ wl_client_add_resource(struct wl_client *client,
 		resource->object.id =
 			wl_map_insert_new(&client->objects,
 					  WL_MAP_ENTRY_LEGACY, resource);
+		if (resource->object.id == 0)
+			return 0;
 	} else if (wl_map_insert_at(&client->objects, WL_MAP_ENTRY_LEGACY,
 				  resource->object.id, resource) < 0) {
-		wl_resource_post_error(client->display_resource,
-				       WL_DISPLAY_ERROR_INVALID_OBJECT,
-				       "invalid new id %d",
-				       resource->object.id);
+		if (errno == EINVAL) {
+			wl_resource_post_error(client->display_resource,
+					       WL_DISPLAY_ERROR_INVALID_OBJECT,
+					       "invalid new id %d",
+					       resource->object.id);
+		}
 		return 0;
 	}
 

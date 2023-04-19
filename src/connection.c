@@ -231,7 +231,7 @@ wl_connection_consume(struct wl_connection *connection, size_t size)
 }
 
 static void
-build_cmsg(struct wl_ring_buffer *buffer, char *data, int *clen)
+build_cmsg(struct wl_ring_buffer *buffer, char *data, size_t *clen)
 {
 	struct cmsghdr *cmsg;
 	size_t size;
@@ -289,9 +289,10 @@ int
 wl_connection_flush(struct wl_connection *connection)
 {
 	struct iovec iov[2];
-	struct msghdr msg;
+	struct msghdr msg = {0};
 	char cmsg[CLEN];
-	int len = 0, count, clen;
+	int len = 0, count;
+	size_t clen;
 	uint32_t tail;
 
 	if (!connection->want_flush)
@@ -303,13 +304,10 @@ wl_connection_flush(struct wl_connection *connection)
 
 		build_cmsg(&connection->fds_out, cmsg, &clen);
 
-		msg.msg_name = NULL;
-		msg.msg_namelen = 0;
 		msg.msg_iov = iov;
 		msg.msg_iovlen = count;
 		msg.msg_control = (clen > 0) ? cmsg : NULL;
 		msg.msg_controllen = clen;
-		msg.msg_flags = 0;
 
 		do {
 			len = sendmsg(connection->fd, &msg,
@@ -568,10 +566,10 @@ wl_closure_init(const struct wl_message *message, uint32_t size,
 
 	if (size) {
 		*num_arrays = wl_message_count_arrays(message);
-		closure = malloc(sizeof *closure + size +
+		closure = zalloc(sizeof *closure + size +
 				 *num_arrays * sizeof(struct wl_array));
 	} else {
-		closure = malloc(sizeof *closure);
+		closure = zalloc(sizeof *closure);
 	}
 
 	if (!closure) {
@@ -810,10 +808,12 @@ wl_connection_demarshal(struct wl_connection *connection,
 			}
 
 			if (wl_map_reserve_new(objects, id) < 0) {
-				wl_log("not a valid new object id (%u), "
-				       "message %s(%s)\n",
-				       id, message->name, message->signature);
-				errno = EINVAL;
+				if (errno == EINVAL) {
+					wl_log("not a valid new object id (%u), "
+					       "message %s(%s)\n", id,
+					       message->name,
+					       message->signature);
+				}
 				goto err;
 			}
 
@@ -1273,6 +1273,7 @@ wl_closure_print(struct wl_closure *closure, struct wl_object *target,
 	struct timespec tp;
 	unsigned int time;
 	uint32_t nval;
+	size_t buffer_length;
 
 	if (log == NULL)
 		return;
